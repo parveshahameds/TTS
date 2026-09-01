@@ -680,7 +680,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urllib.parse.urlparse(self.path).path
 
-        if parsed_path in ["", "/", "/index.html"]:
+        if parsed_path in ["", "/", "/index.html", "/api", "/api/", "/api/index"]:
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -688,7 +688,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(HTML_PAGE.encode("utf-8"))
             return
 
-        if parsed_path in ["/api/health", "/api/status"]:
+        if parsed_path.endswith("/health") or parsed_path.endswith("/status"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -702,7 +702,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode("utf-8"))
             return
 
-        if parsed_path == "/api/telemetry":
+        if parsed_path.endswith("/telemetry"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -738,7 +738,7 @@ class handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        if parsed_path == "/api/compress":
+        if parsed_path.endswith("/compress"):
             sample_count = payload.get("sample_count", 16000)
             original_bytes = sample_count * 2
             compressed_bytes = sample_count // 2
@@ -755,7 +755,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data).encode("utf-8"))
             return
 
-        if parsed_path == "/api/detect":
+        if parsed_path.endswith("/detect"):
             probs = {"keyword": 0.88, "unknown": 0.08, "background": 0.04}
             transcription = 'Transcribed: "Hey Nova, activate system."'
             response_data = {
