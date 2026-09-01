@@ -1,15 +1,8 @@
 import os
 import sys
 import json
-import base64
-import time
-import io
-import traceback
-
-# Base path
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+import urllib.parse
+from http.server import BaseHTTPRequestHandler
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -675,50 +668,45 @@ HTML_PAGE = """<!DOCTYPE html>
 </html>
 """
 
-def app(environ, start_response):
-    """WSGI standard application entrypoint for Vercel Serverless."""
-    try:
-        path = environ.get("PATH_INFO", "/")
-        method = environ.get("REQUEST_METHOD", "GET").upper()
+class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(b"")
 
-        # Handle CORS
-        if method == "OPTIONS":
-            headers = [
-                ("Content-Type", "text/plain"),
-                ("Access-Control-Allow-Origin", "*"),
-                ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
-                ("Access-Control-Allow-Headers", "Content-Type"),
-            ]
-            start_response("200 OK", headers)
-            return [b""]
+    def do_GET(self):
+        parsed_path = urllib.parse.urlparse(self.path).path
 
-        # Serve Homepage
-        if path in ["", "/", "/index.html"]:
-            headers = [
-                ("Content-Type", "text/html; charset=utf-8"),
-                ("Access-Control-Allow-Origin", "*"),
-            ]
-            start_response("200 OK", headers)
-            return [HTML_PAGE.encode("utf-8")]
+        if parsed_path in ["", "/", "/index.html"]:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(HTML_PAGE.encode("utf-8"))
+            return
 
-        # Health API
-        if path in ["/api/health", "/api/status"]:
+        if parsed_path in ["/api/health", "/api/status"]:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
             data = {
                 "status": "healthy",
                 "framework": "EdgeWake",
                 "version": "1.0.0",
                 "runtime": "Vercel Serverless Python"
             }
-            body = json.dumps(data).encode("utf-8")
-            headers = [
-                ("Content-Type", "application/json"),
-                ("Access-Control-Allow-Origin", "*"),
-            ]
-            start_response("200 OK", headers)
-            return [body]
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
 
-        # Telemetry API
-        if path == "/api/telemetry":
+        if parsed_path == "/api/telemetry":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
             data = {
                 "T0_keyword_end": 0.0,
                 "T1_kws_decision_ms": 12.4,
@@ -729,30 +717,28 @@ def app(environ, start_response):
                 "compression_ratio": "4:1",
                 "bandwidth_kbps": 64
             }
-            body = json.dumps(data).encode("utf-8")
-            headers = [
-                ("Content-Type", "application/json"),
-                ("Access-Control-Allow-Origin", "*"),
-            ]
-            start_response("200 OK", headers)
-            return [body]
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
 
-        # Parse request body for POST
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": "Endpoint not found", "path": parsed_path}).encode("utf-8"))
+
+    def do_POST(self):
+        parsed_path = urllib.parse.urlparse(self.path).path
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+
         payload = {}
-        if method == "POST":
+        if body:
             try:
-                content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+                payload = json.loads(body.decode("utf-8"))
             except Exception:
-                content_length = 0
-            if content_length > 0:
-                raw_post_data = environ["wsgi.input"].read(content_length)
-                try:
-                    payload = json.loads(raw_post_data.decode("utf-8"))
-                except Exception:
-                    pass
+                pass
 
-        # Compress API
-        if path == "/api/compress":
+        if parsed_path == "/api/compress":
             sample_count = payload.get("sample_count", 16000)
             original_bytes = sample_count * 2
             compressed_bytes = sample_count // 2
@@ -762,49 +748,30 @@ def app(environ, start_response):
                 "ratio": "4.0x",
                 "savings_percent": "75.0%"
             }
-            body = json.dumps(data).encode("utf-8")
-            headers = [
-                ("Content-Type", "application/json"),
-                ("Access-Control-Allow-Origin", "*"),
-            ]
-            start_response("200 OK", headers)
-            return [body]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
 
-        # Detect / Inference API
-        if path == "/api/detect":
+        if parsed_path == "/api/detect":
             probs = {"keyword": 0.88, "unknown": 0.08, "background": 0.04}
             transcription = 'Transcribed: "Hey Nova, activate system."'
-            
             response_data = {
                 "keyword_detected": True,
                 "probabilities": probs,
                 "transcription": transcription
             }
-            body = json.dumps(response_data).encode("utf-8")
-            headers = [
-                ("Content-Type", "application/json"),
-                ("Access-Control-Allow-Origin", "*"),
-            ]
-            start_response("200 OK", headers)
-            return [body]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(response_data).encode("utf-8"))
+            return
 
-        # 404 Fallback
-        body = json.dumps({"error": "Endpoint not found", "path": path}).encode("utf-8")
-        headers = [
-            ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*"),
-        ]
-        start_response("404 Not Found", headers)
-        return [body]
-
-    except Exception as e:
-        err_msg = json.dumps({"error": str(e), "traceback": traceback.format_exc()}).encode("utf-8")
-        headers = [
-            ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*"),
-        ]
-        start_response("500 Internal Server Error", headers)
-        return [err_msg]
-
-# Handler alias for Vercel
-handler = app
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": "Endpoint not found", "path": parsed_path}).encode("utf-8"))
