@@ -1,11 +1,11 @@
-from api.index import handler, app
+from api.index import app
+from wsgiref.simple_server import make_server
 
 if __name__ == "__main__":
-    from http.server import HTTPServer
-    print("Starting EdgeWake Web Server on http://localhost:3000 ...")
-    server = HTTPServer(("0.0.0.0", 3000), handler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down server.")
-        server.server_close()
+    port = 3000
+    print(f"Starting EdgeWake Web Server on http://localhost:{port} ...")
+    with make_server("0.0.0.0", port, app) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nShutting down server.")
