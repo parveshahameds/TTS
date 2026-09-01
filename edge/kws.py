@@ -1,6 +1,18 @@
 import os
 import numpy as np
-import tensorflow as tf
+
+# Flexible TFLite Interpreter import
+try:
+    from tflite_runtime.interpreter import Interpreter
+except ImportError:
+    try:
+        from ai_edge_litert.interpreter import Interpreter
+    except ImportError:
+        try:
+            import tensorflow as tf
+            Interpreter = tf.lite.Interpreter
+        except ImportError:
+            Interpreter = None
 
 class KWSInterpreter:
     def __init__(self, model_path="models/edgewake_int8.tflite"):
@@ -14,8 +26,11 @@ class KWSInterpreter:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Quantized model not found at {model_path}. Train and quantize model first.")
             
+        if Interpreter is None:
+            raise ImportError("No TFLite runtime found. Please install tflite-runtime or tensorflow.")
+
         print(f"Loading TFLite model: {model_path}")
-        self.interpreter = tf.lite.Interpreter(model_path=model_path)
+        self.interpreter = Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
         
         # Details
