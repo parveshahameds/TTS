@@ -1,0 +1,15 @@
+{
+  "status": "COMPLETED",
+  "transcript": "",
+  "latencies": {
+    "kws_latency_ms": 30.0,
+    "network_latency_ms": 510.17189025878906,
+    "kw_end_to_receive_ms": 10.171890258789062,
+    "asr_latency_ms": 402.44603157043457,
+    "end_to_end_ms": 2219.757080078125
+  },
+  "bandwidth": {
+    "bitrate_kbps": 74.62857142857143,
+    "bytes_transmitted": 13060
+  }
+}
