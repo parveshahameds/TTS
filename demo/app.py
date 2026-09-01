@@ -1,8 +1,15 @@
 import os
+import sys
 import json
 import time
 import subprocess
 import threading
+
+# Ensure project root is in sys.path for cloud deployment
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import psutil
 import numpy as np
 import streamlit as st
@@ -10,8 +17,8 @@ import pandas as pd
 import altair as alt
 
 # Ensure workspace paths
-os.makedirs("models", exist_ok=True)
-SHARED_EVENT_PATH = "models/latest_event.json"
+os.makedirs(os.path.join(PROJECT_ROOT, "models"), exist_ok=True)
+SHARED_EVENT_PATH = os.path.join(PROJECT_ROOT, "models", "latest_event.json")
 
 st.set_page_config(
     page_title="EdgeWake - Privacy-Preserving KWS",
@@ -69,6 +76,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Model path
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "edgewake_int8.tflite")
+
 # Helper to load background processes
 @st.cache_resource
 class ProcessCoordinator:
@@ -92,7 +102,7 @@ class ProcessCoordinator:
         # 2. Start Edge Node if not already running
         if self.node is None or not self.node.is_running:
             self.node = EdgeWakeNode(
-                model_path="models/edgewake_int8.tflite",
+                model_path=MODEL_PATH,
                 compression=compression_type
             )
             self.node.vad.speech_threshold_factor = vad_factor
@@ -146,7 +156,7 @@ temp_threshold = st.sidebar.slider(
 )
 
 # Status variables
-model_exists = os.path.exists("models/edgewake_int8.tflite")
+model_exists = os.path.exists(MODEL_PATH)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Model Initialization")
@@ -156,11 +166,11 @@ if not model_exists:
         with st.spinner("Training tiny model on synthetic dataset..."):
             try:
                 # Run train & quantize as subprocesses
-                import sys
-                subprocess.run([sys.executable, "training/train.py", "--epochs", "5"], check=True)
-                subprocess.run([sys.executable, "training/quantize.py"], check=True)
+                subprocess.run([sys.executable, os.path.join(PROJECT_ROOT, "training", "train.py"), "--epochs", "5"], check=True)
+                subprocess.run([sys.executable, os.path.join(PROJECT_ROOT, "training", "quantize.py")], check=True)
                 st.rerun()
             except Exception as e:
+                st.sidebar.error(f"Setup failed: {e}")
                 st.sidebar.error(f"Setup failed: {e}")
 else:
     st.sidebar.success("✅ INT8 TFLite model loaded.")
@@ -438,7 +448,7 @@ col_b1, col_b2, col_b3 = st.columns(3)
 
 with col_b1:
     st.markdown("#### Model Specification")
-    tflite_size_kb = os.path.getsize("models/edgewake_int8.tflite") / 1024 if model_exists else 0.0
+    tflite_size_kb = os.path.getsize(MODEL_PATH) / 1024 if model_exists else 0.0
     st.table(pd.DataFrame({
         "Metric": ["Architecture", "Precision", "Flash Size", "RAM Usage (Est)", "Params count"],
         "Value": ["DS-CNN (Depthwise)", "INT8 Quantized", f"{tflite_size_kb:.1f} KB", "< 32 KB", "14,883"]
