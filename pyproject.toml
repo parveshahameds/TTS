@@ -1,0 +1,8 @@
+[project]
+name = "edgewake-tts"
+version = "1.0.0"
+description = "EdgeWake Voice Activation & Speech Framework"
+requires-python = ">=3.9"
+
+[tool.vercel]
+entrypoint = "api/index.py"
