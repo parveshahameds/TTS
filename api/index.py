@@ -678,7 +678,8 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(b"")
 
     def do_GET(self):
-        parsed_path = urllib.parse.urlparse(self.path).path
+        raw_path = self.headers.get("x-matched-path") or self.path
+        parsed_path = urllib.parse.urlparse(raw_path).path
 
         if parsed_path in ["", "/", "/index.html", "/api", "/api/", "/api/index"]:
             self.send_response(200)
@@ -727,7 +728,8 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"error": "Endpoint not found", "path": parsed_path}).encode("utf-8"))
 
     def do_POST(self):
-        parsed_path = urllib.parse.urlparse(self.path).path
+        raw_path = self.headers.get("x-matched-path") or self.path
+        parsed_path = urllib.parse.urlparse(raw_path).path
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
 
