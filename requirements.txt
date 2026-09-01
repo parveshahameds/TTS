@@ -1,2 +1,2 @@
-numpy>=1.20.0
-scipy>=1.7.0
+# Lightweight requirements for Vercel Serverless Function
+# For full local desktop development (Streamlit, TensorFlow, PyAudio), see requirements-local.txt
