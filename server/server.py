@@ -12,7 +12,7 @@ from server.asr import LocalASREngine
 SHARED_EVENT_PATH = "models/latest_event.json"
 
 class EdgeWakeASRServer:
-    def __init__(self, host="127.0.0.1", port=5000):
+    def __init__(self, host="127.0.0.1", port=5055):
         self.host = host
         self.port = port
         self.sock = None
@@ -23,24 +23,43 @@ class EdgeWakeASRServer:
         
     def start(self):
         """Starts the TCP ASR server."""
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.host, self.port))
-        self.sock.listen(5)
-        self.is_running = True
-        
-        # Reset shared JSON state
-        self._write_event_state({"status": "IDLE", "transcript": "", "latencies": {}, "bandwidth": {}})
-        
-        print(f"ASR Server listening on {self.host}:{self.port}...")
-        
-        server_thread = threading.Thread(target=self._listen_loop, daemon=True)
-        server_thread.start()
+        if self.is_running and self.sock is not None:
+            return
+
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, "SO_REUSEPORT"):
+                try:
+                    self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                except Exception:
+                    pass
+            self.sock.bind((self.host, self.port))
+            self.sock.listen(5)
+            self.is_running = True
+            
+            # Reset shared JSON state
+            self._write_event_state({"status": "IDLE", "transcript": "", "latencies": {}, "bandwidth": {}})
+            
+            print(f"ASR Server listening on {self.host}:{self.port}...")
+            
+            server_thread = threading.Thread(target=self._listen_loop, daemon=True)
+            server_thread.start()
+        except OSError as e:
+            if e.errno == 48 or "Address already in use" in str(e):
+                print(f"ASR Server port {self.host}:{self.port} already in use or active. Continuing with active server...")
+                self.is_running = True
+            else:
+                raise e
         
     def stop(self):
         self.is_running = False
         if self.sock:
-            self.sock.close()
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
         print("ASR Server stopped.")
         
     def _listen_loop(self):

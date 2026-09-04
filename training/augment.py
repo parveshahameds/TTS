@@ -1,92 +1,80 @@
 import numpy as np
 
-def pad_or_crop(audio, target_length=16000):
-    """Pads or crops audio to a target length (16000 samples for 1 second)."""
-    if len(audio) > target_length:
-        # Random crop
-        start = np.random.randint(0, len(audio) - target_length)
-        return audio[start:start+target_length]
-    elif len(audio) < target_length:
-        # Pad with zeros
-        pad_len = target_length - len(audio)
-        pad_left = np.random.randint(0, pad_len + 1)
-        pad_right = pad_len - pad_left
-        return np.pad(audio, (pad_left, pad_right), mode='constant')
-    return audio
-
-def random_gain(audio, min_gain=0.5, max_gain=1.5):
-    """Applies a random gain multiplier to the audio waveform."""
-    gain = np.random.uniform(min_gain, max_gain)
-    return audio * gain
-
-def time_shift(audio, max_shift_ms=100, sample_rate=16000):
-    """Shifts the audio waveform in time, wrapping or padding with zeros."""
-    max_shift = int(max_shift_ms * sample_rate / 1000)
-    if max_shift <= 0:
+def align_speech_window(audio, target_length=16240, jitter_ms=30, sample_rate=16000):
+    """
+    Finds the speech active region using energy envelope and extracts a target_length window
+    centered on the speech, with optional random temporal jitter.
+    """
+    if len(audio) <= target_length:
+        if len(audio) < target_length:
+            return np.pad(audio, (0, target_length - len(audio)), mode='constant')
         return audio
-    shift = np.random.randint(-max_shift, max_shift)
-    if shift > 0:
-        return np.pad(audio, (shift, 0), mode='constant')[:-shift]
-    elif shift < 0:
-        return np.pad(audio, (0, -shift), mode='constant')[-shift:]
+        
+    frame_len = int(0.025 * sample_rate)  # 400
+    hop = int(0.010 * sample_rate)        # 160
+    num_frames = (len(audio) - frame_len) // hop + 1
+    
+    energies = np.array([
+        np.sum(audio[i*hop : i*hop + frame_len]**2) 
+        for i in range(num_frames)
+    ])
+    
+    # Smooth energy
+    kernel = np.ones(5) / 5.0
+    smoothed = np.convolve(energies, kernel, mode='same')
+    total = np.sum(smoothed)
+    
+    if total > 1e-6:
+        center_frame = int(np.sum(np.arange(len(smoothed)) * smoothed) / total)
+        center_sample = center_frame * hop + (frame_len // 2)
+    else:
+        center_sample = len(audio) // 2
+        
+    start = center_sample - (target_length // 2)
+    if jitter_ms > 0:
+        max_jitter = int(jitter_ms * sample_rate / 1000)
+        start += np.random.randint(-max_jitter, max_jitter + 1)
+        
+    start = max(0, min(len(audio) - target_length, start))
+    return audio[start : start + target_length]
+
+def pad_or_crop(audio, target_length=16240):
+    """Pads or crops audio to target length."""
+    if len(audio) > target_length:
+        return align_speech_window(audio, target_length, jitter_ms=0)
+    elif len(audio) < target_length:
+        return np.pad(audio, (0, target_length - len(audio)), mode='constant')
     return audio
 
-def mix_noise(audio, noise_samples, snr_db_range=(5, 15)):
-    """Mixes background noise into the audio signal with a random SNR (in dB)."""
+def random_gain(audio, min_gain=0.6, max_gain=1.4):
+    """Applies a random gain multiplier."""
+    return audio * np.random.uniform(min_gain, max_gain)
+
+def mix_noise(audio, noise_samples, snr_db_range=(8, 25)):
+    """Mixes background noise into the audio signal with a random SNR."""
     if not noise_samples:
         return audio
-    
-    # Pick a random noise file
     noise = noise_samples[np.random.randint(0, len(noise_samples))]
     if len(noise) == 0:
         return audio
         
-    # Crop a chunk of noise matching the audio length
     if len(noise) > len(audio):
         start = np.random.randint(0, len(noise) - len(audio))
         noise_chunk = noise[start:start+len(audio)]
     else:
         noise_chunk = np.pad(noise, (0, len(audio) - len(noise)), mode='wrap')
         
-    # Standard SNR math
     snr_db = np.random.uniform(*snr_db_range)
     p_signal = np.mean(audio ** 2) + 1e-10
     p_noise = np.mean(noise_chunk ** 2) + 1e-10
-    
-    # scaling factor for noise
     k = np.sqrt(p_signal / (p_noise * (10 ** (snr_db / 10.0))))
     return audio + k * noise_chunk
 
-def time_stretch(audio, stretch_range=(0.95, 1.05)):
-    """Applies simple linear interpolation time-stretching to the audio."""
-    stretch = np.random.uniform(*stretch_range)
-    if stretch == 1.0:
-        return audio
-    num_samples = int(len(audio) / stretch)
-    x = np.linspace(0, len(audio) - 1, num_samples)
-    xp = np.arange(len(audio))
-    stretched = np.interp(x, xp, audio)
-    return pad_or_crop(stretched, len(audio))
-
-def augment_waveform(audio, noise_samples=None):
-    """Runs a complete random pipeline of audio augmentations."""
-    # Ensure exactly 1 second first
-    x = pad_or_crop(audio, 16000)
-    
-    # 80% chance to shift in time
-    if np.random.random() < 0.8:
-        x = time_shift(x, max_shift_ms=80)
-        
-    # 50% chance to stretch/compress time
-    if np.random.random() < 0.5:
-        x = time_stretch(x, stretch_range=(0.9, 1.1))
-        
-    # 80% chance to adjust volume
-    if np.random.random() < 0.8:
-        x = random_gain(x, min_gain=0.6, max_gain=1.4)
-        
-    # 60% chance to mix background noise if noise is available
+def augment_waveform(audio, noise_samples=None, jitter_ms=30):
+    """Runs audio augmentations with energy alignment, gain perturbation, and noise injection."""
+    x = align_speech_window(audio, 16240, jitter_ms=jitter_ms)
+    x = random_gain(x, min_gain=0.7, max_gain=1.3)
     if noise_samples and np.random.random() < 0.6:
-        x = mix_noise(x, noise_samples, snr_db_range=(7, 20))
-        
+        x = mix_noise(x, noise_samples, snr_db_range=(8, 25))
     return x
+

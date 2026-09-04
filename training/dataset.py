@@ -3,7 +3,12 @@ import glob
 import numpy as np
 import soundfile as sf
 from edge.features import extract_features, TARGET_SAMPLES
-from training.augment import augment_waveform, pad_or_crop
+from training.augment import augment_waveform, align_speech_window, random_gain, mix_noise
+from training.synthetic_speech import (
+    generate_synthetic_phoneme_speech, 
+    generate_synthetic_confuser, 
+    generate_synthetic_noise_transient
+)
 
 # Labels
 LABEL_KEYWORD = 0       # "Hey Nova"
@@ -12,51 +17,41 @@ LABEL_BACKGROUND = 2    # Silence / environmental noise
 NUM_CLASSES = 3
 
 def load_wav(filepath):
-    """Loads a WAV file, resampling or converting to mono if necessary, normalized to float32 [-1.0, 1.0]."""
+    """Loads a WAV file normalized to float32 [-1.0, 1.0]."""
     try:
         data, samplerate = sf.read(filepath)
-        if samplerate != 16000:
-            # Simple decimation/interpolation fallback
-            # In a real environment we assume 16kHz WAVs are recorded.
-            pass
         if len(data.shape) > 1:
-            data = np.mean(data, axis=1) # Mono conversion
+            data = np.mean(data, axis=1)
         return data.astype(np.float32)
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
         return None
 
-def generate_synthetic_data(num_samples=60):
-    """Generates synthetic audio data for development testing when no recordings exist."""
-    print("Warning: Generating synthetic training data because dataset directories are empty or missing.")
+def generate_synthetic_data(num_samples=90):
+    """Generates synthetic audio data for testing when no recordings exist."""
+    print("Generating balanced synthetic dataset...")
     X = []
     y = []
     
-    # 16240 samples for 100 spectrogram frames
-    t = np.linspace(0, 1.0, TARGET_SAMPLES)
-    
-    for i in range(num_samples):
-        label = i % 3
-        if label == LABEL_KEYWORD:
-            # Keyword: 'Hey Nova' -> Mix of 440Hz and 880Hz sinewaves
-            audio = 0.5 * np.sin(2 * np.pi * 440 * t) + 0.3 * np.sin(2 * np.pi * 880 * t)
-        elif label == LABEL_UNKNOWN:
-            # Unknown speech -> Mix of 220Hz and 660Hz sinewaves
-            audio = 0.5 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 660 * t)
-        else:
-            # Background -> Low amplitude white noise
-            audio = np.random.normal(0, 0.02, TARGET_SAMPLES)
-            
-        # Add random noise
-        audio += np.random.normal(0, 0.01, TARGET_SAMPLES)
+    for _ in range(num_samples // 3):
+        # Keyword synthetic
+        t = np.linspace(0, 1.0, TARGET_SAMPLES)
+        kw = 0.5 * np.sin(2 * np.pi * 440 * t) + 0.3 * np.sin(2 * np.pi * 880 * t)
+        X.append(extract_features(kw))
+        y.append(LABEL_KEYWORD)
         
-        # Extract features
-        features = extract_features(audio)
-        X.append(features)
-        y.append(label)
+        # Unknown synthetic
+        unk = generate_synthetic_phoneme_speech()
+        X.append(extract_features(unk))
+        y.append(LABEL_UNKNOWN)
         
-    X = np.array(X)[..., np.newaxis] # Add channel dimension -> (N, 100, 40, 1)
-    y = np.array(y)
+        # Background synthetic
+        bg = generate_synthetic_noise_transient()
+        X.append(extract_features(bg))
+        y.append(LABEL_BACKGROUND)
+        
+    X = np.array(X, dtype=np.float32)[..., np.newaxis]
+    y = np.array(y, dtype=np.int32)
     return X, y
 
 def load_dataset(data_dir="data"):
@@ -74,7 +69,6 @@ def load_dataset(data_dir="data"):
     if len(pos_files) == 0 and len(neg_files) == 0:
         return generate_synthetic_data()
         
-    # Load raw background noise samples for mixing
     bg_noises = []
     for f in bg_files:
         audio = load_wav(f)
@@ -84,63 +78,77 @@ def load_dataset(data_dir="data"):
     X = []
     y = []
     
-    # Process positive samples (Keyword)
+    # 1. Process Positive Samples (Keyword: Class 0)
     for f in pos_files:
         audio = load_wav(f)
-        if audio is not None:
-            # Add original
-            features = extract_features(pad_or_crop(audio, TARGET_SAMPLES))
-            X.append(features)
+        if audio is None:
+            continue
+        # Original aligned
+        aligned = align_speech_window(audio, TARGET_SAMPLES, jitter_ms=0)
+        X.append(extract_features(aligned))
+        y.append(LABEL_KEYWORD)
+        
+        # Augment with temporal jitter, volume variations, and background noise mixing
+        for _ in range(12):
+            aug_audio = augment_waveform(audio, bg_noises, jitter_ms=35)
+            X.append(extract_features(aug_audio))
             y.append(LABEL_KEYWORD)
             
-            # Add augmented versions
-            for _ in range(5):  # 5x augmentation for small datasets
-                aug_audio = augment_waveform(audio, bg_noises)
-                X.append(extract_features(aug_audio))
-                y.append(LABEL_KEYWORD)
-                
-    # Process negative samples (Unknown Speech)
+    # 2. Process Negative Samples (Unknown Speech: Class 1)
     for f in neg_files:
         audio = load_wav(f)
-        if audio is not None:
-            features = extract_features(pad_or_crop(audio, TARGET_SAMPLES))
-            X.append(features)
+        if audio is None:
+            continue
+        aligned = align_speech_window(audio, TARGET_SAMPLES, jitter_ms=0)
+        X.append(extract_features(aligned))
+        y.append(LABEL_UNKNOWN)
+        
+        for _ in range(15):
+            aug_audio = augment_waveform(audio, bg_noises, jitter_ms=45)
+            X.append(extract_features(aug_audio))
             y.append(LABEL_UNKNOWN)
             
-            # Add augmented versions
-            for _ in range(5):
-                aug_audio = augment_waveform(audio, bg_noises)
-                X.append(extract_features(aug_audio))
-                y.append(LABEL_UNKNOWN)
+    # Add diverse synthetic speech phonemes and confusers to the Unknown Speech class
+    num_synthetic_speech = max(100, len(X) // 3)
+    for _ in range(num_synthetic_speech):
+        syn_speech = generate_synthetic_phoneme_speech()
+        if bg_noises and np.random.random() < 0.4:
+            syn_speech = mix_noise(syn_speech, bg_noises, snr_db_range=(10, 25))
+        X.append(extract_features(syn_speech))
+        y.append(LABEL_UNKNOWN)
+        
+    # Add phoneme confuser words ("Hey", "Nova", "Hello", "Never", etc.)
+    for _ in range(50):
+        confuser = generate_synthetic_confuser()
+        X.append(extract_features(confuser))
+        y.append(LABEL_UNKNOWN)
 
-    # Process background samples (Silence/Noise)
-    # Background clips can be sliced into multiple 1-second chunks
-    for f in bg_files:
-        audio = load_wav(f)
-        if audio is not None:
-            # Slice into 1-second (16240 samples) segments
-            step = TARGET_SAMPLES // 2  # 50% overlap
-            for start in range(0, len(audio) - TARGET_SAMPLES, step):
-                chunk = audio[start:start+TARGET_SAMPLES]
-                X.append(extract_features(chunk))
-                y.append(LABEL_BACKGROUND)
-                
-                # Add augmented chunk
-                for _ in range(2):
-                    aug_chunk = augment_waveform(chunk, None) # No need to mix noise into noise
-                    X.append(extract_features(aug_chunk))
-                    y.append(LABEL_BACKGROUND)
-                    
-    # Fallback if somehow background count is zero
-    if len(bg_files) == 0:
-        # Create silent/noise samples
-        for _ in range(max(10, len(pos_files))):
-            noise = np.random.normal(0, 0.01, TARGET_SAMPLES)
-            X.append(extract_features(noise))
+    # 3. Process Background Samples (Silence & Noise: Class 2)
+    for bg in bg_noises:
+        step = TARGET_SAMPLES // 2
+        for start in range(0, len(bg) - TARGET_SAMPLES, step):
+            chunk = bg[start : start + TARGET_SAMPLES]
+            X.append(extract_features(chunk))
             y.append(LABEL_BACKGROUND)
             
+            # Scaled noise chunk
+            X.append(extract_features(chunk * np.random.uniform(0.4, 2.0)))
+            y.append(LABEL_BACKGROUND)
+            
+    # Add synthetic noise transients (mic taps, clicks, hums, pink noise)
+    for _ in range(80):
+        noise_transient = generate_synthetic_noise_transient()
+        X.append(extract_features(noise_transient))
+        y.append(LABEL_BACKGROUND)
+        
+    # Add pure silence samples
+    for _ in range(20):
+        silence = np.zeros(TARGET_SAMPLES, dtype=np.float32)
+        X.append(extract_features(silence))
+        y.append(LABEL_BACKGROUND)
+            
     X = np.array(X, dtype=np.float32)
-    X = X[..., np.newaxis] # Add channel dimension
+    X = X[..., np.newaxis]
     y = np.array(y, dtype=np.int32)
     
     # Shuffle
@@ -149,4 +157,6 @@ def load_dataset(data_dir="data"):
     X = X[indices]
     y = y[indices]
     
+    print(f"Dataset generated: Total={len(X)} samples. Distribution: Keyword={np.sum(y == LABEL_KEYWORD)}, Unknown={np.sum(y == LABEL_UNKNOWN)}, Background={np.sum(y == LABEL_BACKGROUND)}")
     return X, y
+

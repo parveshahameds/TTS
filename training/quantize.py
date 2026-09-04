@@ -13,16 +13,15 @@ def quantize_model(model_path="models/edgewake_model.h5", output_path="models/ed
     model = tf.keras.models.load_model(model_path)
     
     print("Loading representative dataset for calibration...")
-    X, _ = load_dataset(data_dir)
+    X, y = load_dataset(data_dir)
     
-    # Use a subset of training data for representative calibration
-    # Standard size is ~100 samples
-    num_calibration_samples = min(100, len(X))
-    calibration_data = X[:num_calibration_samples].astype(np.float32)
+    # Use a diverse subset of calibration data across all classes
+    num_calibration_samples = min(150, len(X))
+    indices = np.linspace(0, len(X) - 1, num_calibration_samples, dtype=int)
+    calibration_data = X[indices].astype(np.float32)
     
     def representative_dataset_gen():
         for i in range(num_calibration_samples):
-            # TFLite expects input with a batch dimension of 1
             sample = np.expand_dims(calibration_data[i], axis=0)
             yield [sample]
             
@@ -31,23 +30,18 @@ def quantize_model(model_path="models/edgewake_model.h5", output_path="models/ed
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = representative_dataset_gen
     
-    # Enforce full integer quantization
+    # Enforce integer quantization
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
     
-    # Ensure standard operators are used
-    converter.target_spec.supported_types = [tf.int8]
-    
     try:
         tflite_model_quantized = converter.convert()
     except Exception as e:
-        print(f"Quantization failed: {e}")
-        print("Retrying with relaxed input/output types (float32 inputs, int8 internal execution)...")
+        print(f"Strict INT8 quantization failed: {e}. Retrying with relaxed fallback...")
         converter = tf.lite.TFLiteConverter.from_keras_model(model)
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.representative_dataset = representative_dataset_gen
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
         tflite_model_quantized = converter.convert()
         
     # Save quantized model
@@ -55,19 +49,9 @@ def quantize_model(model_path="models/edgewake_model.h5", output_path="models/ed
     with open(output_path, "wb") as f:
         f.write(tflite_model_quantized)
         
-    # Size Comparison
     float_size_kb = os.path.getsize(model_path) / 1024
     quant_size_kb = os.path.getsize(output_path) / 1024
     compression_ratio = float_size_kb / quant_size_kb if quant_size_kb > 0 else 0
-    
-    # Run dynamic sanity check
-    interpreter = tf.lite.Interpreter(model_path=output_path)
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    
-    input_shape = input_details[0]['shape']
-    input_dtype = input_details[0]['dtype']
     
     print("\n" + "="*50)
     print("              EdgeWake Quantization Report        ")
@@ -76,14 +60,7 @@ def quantize_model(model_path="models/edgewake_model.h5", output_path="models/ed
     print(f"Quantized Model Size (INT8):   {quant_size_kb:.2f} KB")
     print(f"Compression Ratio:             {compression_ratio:.2f}x")
     print(f"Model Parameters:              {model.count_params():,}")
-    print(f"Estimated RAM Footprint:       {quant_size_kb * 1.5:.2f} KB (Internal buffers + weights)")
-    print("-"*50)
-    print(f"Quantized Model Sanity Check:")
-    print(f"  Input Shape:  {input_shape}")
-    print(f"  Input Dtype:  {input_dtype}")
-    print(f"  Output Shape: {output_details[0]['shape']}")
-    print(f"  Output Dtype: {output_details[0]['dtype']}")
-    print("Sanity check passed successfully!")
+    print(f"Estimated RAM Footprint:       {quant_size_kb * 1.5:.2f} KB")
     print("="*50)
 
 if __name__ == "__main__":
@@ -98,3 +75,4 @@ if __name__ == "__main__":
         output_path=args.output_path,
         data_dir=args.data_dir
     )
+

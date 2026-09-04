@@ -80,7 +80,6 @@ st.markdown("""
 MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "edgewake_int8.tflite")
 
 # Helper to load background processes
-@st.cache_resource
 class ProcessCoordinator:
     def __init__(self):
         self.server = None
@@ -94,14 +93,15 @@ class ProcessCoordinator:
         
         # 1. Start Server if not already running
         if self.server is None or not self.server.is_running:
-            self.server = EdgeWakeASRServer()
+            self.server = EdgeWakeASRServer(port=5055)
             self.server.start()
             # Give server a moment to start
-            time.sleep(0.5)
+            time.sleep(0.3)
         
         # 2. Start Edge Node if not already running
         if self.node is None or not self.node.is_running:
             self.node = EdgeWakeNode(
+                port=5055,
                 model_path=MODEL_PATH,
                 compression=compression_type
             )
@@ -123,8 +123,12 @@ class ProcessCoordinator:
             self.server.stop()
             self.server = None
 
-# Initialize Process coordinator
-coordinator = ProcessCoordinator()
+# Initialize Process coordinator singleton
+@st.cache_resource
+def get_coordinator():
+    return ProcessCoordinator()
+
+coordinator = get_coordinator()
 
 # Sidebar: Controls & Calibration
 st.sidebar.title("🎛️ Control Panel")
@@ -141,7 +145,7 @@ vad_slider = st.sidebar.slider(
     "VAD Sensitivity (RMS multiplier)",
     min_value=1.5,
     max_value=5.0,
-    value=2.2,
+    value=2.5,
     step=0.1,
     help="Higher value requires louder speech to activate KWS inference."
 )
@@ -149,11 +153,12 @@ vad_slider = st.sidebar.slider(
 temp_threshold = st.sidebar.slider(
     "KWS Trigger Threshold",
     min_value=0.5,
-    max_value=0.95,
-    value=0.65,
-    step=0.05,
+    max_value=0.98,
+    value=0.80,
+    step=0.02,
     help="Model probability threshold required to feed temporal verifier."
 )
+
 
 # Status variables
 model_exists = os.path.exists(MODEL_PATH)
@@ -437,7 +442,7 @@ if latencies and running:
         tooltip=['Stage', 'Latency (ms)']
     ).properties(height=200, width=600)
     
-    st.altair_chart(c, use_container_width=True)
+    st.altair_chart(c, width="stretch")
 else:
     st.info("No latency logs recorded. Say 'Hey Nova' to capture latency parameters.")
 

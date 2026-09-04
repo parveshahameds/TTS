@@ -6,7 +6,7 @@ from streaming.protocol import TYPE_START, TYPE_DATA, TYPE_END, TYPE_PING, creat
 from streaming.encoder import ImaAdpcmEncoder
 
 class StreamingClient:
-    def __init__(self, host="127.0.0.1", port=5000, compression=COMPRESSION_NONE):
+    def __init__(self, host="127.0.0.1", port=5055, compression=COMPRESSION_NONE):
         self.host = host
         self.port = port
         self.compression = compression

@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from training.dataset import load_dataset
 from training.model import create_dscnn_model
 
-def train_model(data_dir="data", models_dir="models", epochs=30, batch_size=32):
+def train_model(data_dir="data", models_dir="models", epochs=40, batch_size=32):
     os.makedirs(models_dir, exist_ok=True)
     
     print("Loading dataset...")
@@ -35,7 +35,7 @@ def train_model(data_dir="data", models_dir="models", epochs=30, batch_size=32):
     model_path = os.path.join(models_dir, "edgewake_model.h5")
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint(model_path, save_best_only=True, monitor='val_loss', mode='min', verbose=1),
-        tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1),
+        tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=12, restore_best_weights=True, verbose=1),
         tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, verbose=1)
     ]
     
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train EdgeWake KWS Model")
     parser.add_argument("--data_dir", type=str, default="data", help="Directory containing train WAV files")
     parser.add_argument("--models_dir", type=str, default="models", help="Directory to save the trained model")
-    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=40, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
     args = parser.parse_args()
     
@@ -67,3 +67,4 @@ if __name__ == "__main__":
         epochs=args.epochs,
         batch_size=args.batch_size
     )
+

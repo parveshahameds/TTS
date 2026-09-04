@@ -47,7 +47,7 @@ MEL_FILTERBANK = compute_mel_filterbank(NUM_FFT, NUM_MELS, SAMPLE_RATE)
 HAMMING_WINDOW = np.hamming(FRAME_LEN).astype(np.float32)
 
 def extract_features(audio):
-    """Computes a Log-Mel Spectrogram of shape (NUM_FRAMES, NUM_MELS) from raw audio."""
+    """Computes a standardized Log-Mel Spectrogram of shape (NUM_FRAMES, NUM_MELS) from raw audio."""
     # Ensure standard length
     if len(audio) != TARGET_SAMPLES:
         if len(audio) > TARGET_SAMPLES:
@@ -75,6 +75,10 @@ def extract_features(audio):
     # Apply Mel filterbank
     mel_spectrogram = np.dot(power_spectrogram, MEL_FILTERBANK)
     
-    # Log-Mel
+    # Log-Mel with stable floor
     log_mel = np.log(mel_spectrogram + 1e-10)
-    return log_mel
+    
+    # Standardized scaling to roughly [-2.0, 2.0] range
+    norm_log_mel = (log_mel + 12.0) / 6.0
+    return norm_log_mel.astype(np.float32)
+

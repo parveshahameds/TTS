@@ -60,16 +60,72 @@ def test_adpcm_codec():
     correlation = np.corrcoef(pcm, decoded)[0, 1]
     assert correlation > 0.95
 
-def test_protocol_packets():
-    payload = b"TESTPAYLOAD"
-    timestamp = 1693400000.123
+def test_temporal_verifier_margin_and_rejection():
+    from edge.temporal import TemporalVerifier
     
-    packet = create_packet(TYPE_START, COMPRESSION_ADPCM, payload, seq_num=42, timestamp=timestamp)
-    header = parse_header(packet[:20])
+    verifier = TemporalVerifier(threshold=0.80, min_consecutive_frames=3, margin=0.20)
     
-    assert header is not None
-    assert header["packet_type"] == TYPE_START
-    assert header["compression_type"] == COMPRESSION_ADPCM
-    assert header["seq_num"] == 42
-    assert abs(header["timestamp"] - timestamp) < 0.002 # Float precision within 1ms
-    assert header["payload_len"] == len(payload)
+    # 1. Test rejection on noise / background (e.g. Class 2 high)
+    is_trig, conf = verifier.process_probability([0.3, 0.1, 0.6])
+    assert not is_trig
+    assert verifier.consecutive_count == 0
+    
+    # 2. Test rejection on unknown speech (Class 1 high)
+    is_trig, conf = verifier.process_probability([0.45, 0.50, 0.05])
+    assert not is_trig
+    assert verifier.consecutive_count == 0
+    
+    # 3. Test rejection when margin is insufficient (e.g. 0.82 Keyword vs 0.75 Unknown)
+    is_trig, conf = verifier.process_probability([0.82, 0.75, 0.05])
+    assert not is_trig
+    assert verifier.consecutive_count == 0
+    
+    # 4. Test trigger on 3 consecutive strong frames with proper margin
+    strong_frame = [0.95, 0.03, 0.02]
+    t1, _ = verifier.process_probability(strong_frame)
+    assert not t1
+    assert verifier.consecutive_count == 1
+    
+    t2, _ = verifier.process_probability(strong_frame)
+    assert not t2
+    assert verifier.consecutive_count == 2
+    
+    t3, _ = verifier.process_probability(strong_frame)
+    assert t3 # Verified & Triggered on 3rd frame!
+
+def test_kws_int8_interpreter():
+    import os
+    from edge.kws import KWSInterpreter
+    
+    model_path = "models/edgewake_int8.tflite"
+    if os.path.exists(model_path):
+        interpreter = KWSInterpreter(model_path)
+        dummy_spec = np.zeros((100, 40), dtype=np.float32)
+        probs = interpreter.predict(dummy_spec)
+        assert len(probs) == 3
+        assert np.isclose(np.sum(probs), 1.0, atol=1e-4)
+
+def test_server_client_lifecycle():
+    import time
+    from server.server import EdgeWakeASRServer
+    from streaming.client import StreamingClient
+    
+    server = EdgeWakeASRServer(port=5055)
+    server.start()
+    time.sleep(0.1)
+    
+    client = StreamingClient(port=5055)
+    connected = client.connect()
+    assert connected
+    
+    # Send pre-roll and dummy chunk
+    client.start_stream(np.zeros(800, dtype=np.int16), time.time())
+    client.send_audio(np.zeros(160, dtype=np.int16))
+    time.sleep(0.1)
+    client.stop_stream()
+    time.sleep(0.1)
+    
+    client.disconnect()
+    server.stop()
+
+

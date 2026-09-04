@@ -10,7 +10,7 @@ from edge.ring_buffer import AudioRingBuffer
 from streaming.client import StreamingClient, COMPRESSION_NONE, COMPRESSION_ADPCM
 
 class EdgeWakeNode:
-    def __init__(self, host="127.0.0.1", port=5000, model_path="models/edgewake_int8.tflite", compression=COMPRESSION_NONE):
+    def __init__(self, host="127.0.0.1", port=5055, model_path="models/edgewake_int8.tflite", compression=COMPRESSION_NONE):
         self.host = host
         self.port = port
         self.model_path = model_path
@@ -132,8 +132,8 @@ class EdgeWakeNode:
                     keyword_prob = float(probs[0])
                     self.stats["confidence"] = keyword_prob
                     
-                    # 4. Temporal verification
-                    is_triggered, smoothed_prob = self.temporal.process_probability(keyword_prob)
+                    # 4. Temporal verification with margin check
+                    is_triggered, smoothed_prob = self.temporal.process_probability(probs)
                     
                     if is_triggered:
                         trigger_time = time.time()
@@ -152,8 +152,9 @@ class EdgeWakeNode:
                 else:
                     self.stats["cpu_saved"] = True
                     # Reset temporal verifier slightly on silence
-                    _, _ = self.temporal.process_probability(0.0)
+                    _, _ = self.temporal.process_probability([0.0, 0.0, 1.0])
                     self.stats["confidence"] = 0.0
+
                     
             elif self.state == "STREAMING":
                 # Check VAD for auto-stop conditions

@@ -2,54 +2,49 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 
 def create_dscnn_model(input_shape=(100, 40, 1), num_classes=3):
-    """Creates a tiny Depthwise-Separable CNN (DS-CNN) model optimized for microcontrollers."""
-    model = models.Sequential()
+    """
+    Creates a Depthwise-Separable CNN (DS-CNN) with 1D temporal phoneme modeling.
+    Preserves sequential timing so syllables must occur in exact chronological order.
+    """
+    inp = layers.Input(shape=input_shape)
     
-    # Input Layer
-    model.add(layers.Input(shape=input_shape))
-    
-    # 1. Standard Conv2D Layer (acting as initial feature processing)
-    # Using larger kernel in time dimension (10, 4) and stride (2, 2) to reduce dimensions quickly
-    model.add(layers.Conv2D(16, kernel_size=(10, 4), strides=(2, 2), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Dropout(0.1))
+    # 1. Initial 2D Convolution (extracts time-frequency spectral features)
+    x = layers.Conv2D(32, kernel_size=(5, 4), strides=(2, 2), padding='same', activation='relu')(inp)
+    x = layers.Dropout(0.1)(x)
     
     # 2. DS-CNN Block 1
-    model.add(layers.DepthwiseConv2D(kernel_size=(3, 3), strides=(1, 1), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Conv2D(32, kernel_size=(1, 1), strides=(1, 1), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Dropout(0.1))
+    x = layers.DepthwiseConv2D(kernel_size=(3, 3), strides=(1, 1), padding='same', activation='relu')(x)
+    x = layers.Conv2D(48, kernel_size=(1, 1), padding='same', activation='relu')(x)
+    x = layers.Dropout(0.1)(x)
     
-    # 3. DS-CNN Block 2
-    model.add(layers.DepthwiseConv2D(kernel_size=(3, 3), strides=(1, 1), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Conv2D(32, kernel_size=(1, 1), strides=(1, 1), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Dropout(0.1))
+    # 3. DS-CNN Block 2 (temporal & spectral downsampling)
+    x = layers.DepthwiseConv2D(kernel_size=(3, 3), strides=(2, 2), padding='same', activation='relu')(x)
+    x = layers.Conv2D(64, kernel_size=(1, 1), padding='same', activation='relu')(x)
+    x = layers.Dropout(0.1)(x)
+
+    # 4. DS-CNN Block 3 (temporal & spectral downsampling)
+    x = layers.DepthwiseConv2D(kernel_size=(3, 3), strides=(2, 2), padding='same', activation='relu')(x)
+    x = layers.Conv2D(64, kernel_size=(1, 1), padding='same', activation='relu')(x)
+    x = layers.Dropout(0.1)(x)
     
-    # 4. DS-CNN Block 3
-    model.add(layers.DepthwiseConv2D(kernel_size=(3, 3), strides=(1, 1), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Conv2D(32, kernel_size=(1, 1), strides=(1, 1), padding='same', use_bias=False))
-    model.add(layers.BatchNormalization())
-    model.add(layers.ReLU())
-    model.add(layers.Dropout(0.1))
+    # 5. Pool across frequency dimension only, preserving the 13 temporal frames:
+    # Shape transitions from (batch, 13, 5, 64) -> (batch, 13, 1, 64) -> (batch, 13, 64)
+    x = layers.AveragePooling2D(pool_size=(1, 5))(x)
+    x = layers.Reshape((13, 64))(x)
     
-    # Global Average Pooling to flatten spatial dimensions (MCU friendly compared to Flatten)
-    model.add(layers.GlobalAveragePooling2D())
+    # 6. 1D Temporal Convolution (models sequential syllable transitions)
+    x = layers.Conv1D(64, kernel_size=3, padding='same', activation='relu')(x)
+    x = layers.GlobalMaxPooling1D()(x)
     
-    # Dense classification layer
-    model.add(layers.Dense(num_classes, activation='softmax'))
+    # 7. Dense Classification Head
+    x = layers.Dense(32, activation='relu')(x)
+    x = layers.Dropout(0.2)(x)
+    out = layers.Dense(num_classes, activation='softmax')(x)
     
+    model = models.Model(inputs=inp, outputs=out, name="EdgeWake_KWS_DSCNN")
     return model
 
 if __name__ == "__main__":
     model = create_dscnn_model()
     model.summary()
+
